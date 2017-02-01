@@ -4,11 +4,11 @@ import time, random
 from socket import *
 
 def usage():
-    print "usage: %s [--clientPort <port#>] [--serverAddr host:port] [--byteRate <bytes-per-second>] [--propLat <latency_secs>] \n[--pDelay <prob-delayed msg>] [--pDrop <prob-drop-msg]" % sys.argv[0]
+    print "usage: %s [--clientPort <port#>] [--serverAddr <host:port>]\n [--byteRate <bytes-per-second>] [--propLat <latency_secs>]\n [--pDelay <prob-delayed msg>] [--delayMin <seconds, default=1> ] [--delayMax <seconds default=1>]\n [--pDrop <prob-drop-msg>] \n [-v]" % sys.argv[0]
     sys.exit(1)
 
 startTime = time.time()
-def relTime(when):
+def relTime(when): 
     return when-startTime
 
 
@@ -21,7 +21,8 @@ propLat = 1.0e-2                        # 10 ms
 pDelay = 0.0
 pDrop = 0.0
 verbose = 0
-
+delayMin = 1.0
+delayMax = 1.0
 
 print "argv=", sys.argv
 
@@ -42,6 +43,10 @@ try:
             qCap = int(args[0]); del args[0]
         elif sw == "--pDelay":
             pDelay = float(args[0]); del args[0]
+        elif sw == "--delayMin":
+            delayMin= float(args[0]); del args[0]
+        elif sw == "--delayMax":
+            delayMax= float(args[0]); del args[0]
         elif sw == "pDrop":
             pDrop = float(args[0]); del args[0]
         elif sw == "-v" or sw == "--verbose":
@@ -97,8 +102,9 @@ class TransmissionSim:
             if verbose: print "... random drop ;)"
             return
         if pDelay > 0.0 and self.pDelay < random.random(): # random extra delay
-            deliveryTime += 1.0
-            if verbose: print "... delaying 1s ;)"
+            delay = random.randrange(int(delayMin * 1000), int(delayMax * 1000))/1000.0 # in millisec
+            deliveryTime += delay
+            if verbose: print "... delaying %d ms" % int(delay * 1000)
         if verbose: print "... scheduled for delivery at relTime %f" % relTime(deliveryTime)
         timeActions.put((deliveryTime, lambda : TransmissionSim.deliver(self, msg)))
         
