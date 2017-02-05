@@ -1,36 +1,56 @@
 #! /bin/python
 import sys, re
 import time, random
+import Queue
+from select import select
 from socket import *
+from sys import exit
 
 def usage():
-    print "usage: %s [--clientPort <port#>] [--serverAddr <host:port>]\n [--byteRate <bytes-per-second>] [--propLat <latency_secs>]\n [--pDelay <prob-delayed msg>] [--delayMin <seconds, default=1> ] [--delayMax <seconds default=1>]\n [--pDrop <prob-drop-msg>] \n [-v]" % sys.argv[0]
+    """ print usage information """
+    print """usage: %s \n
+          Option                                   Default     Description
+         [--clientPort <port#>]                      50000     Client port number
+         [--serverAddr host:port]          localhost:50001     Server port number
+
+         [--byteRate <bytes-per-second>]             10000     Byterate at which to forward messages
+         [--propLat <latency_secs>]                   0.01     Propogational Latency
+         [--qCap <queue-capacity>]                       4     Maximium number of messages to queue
+
+         [--pDelay <prob-delayed-msg>]                 0.0     Probability message delayed
+             [--delayMin <sec>] [--delayMax <sec>      1.0       w/ uniform distribution
+         [--pDrop <prob-drop-msg]                      0.0     Probability of message being dropped
+         [--pDup <prob-dup-msg]                        0.0     Probability of a msg duplication 
+
+         [--verbose]                                    off    Verbose Mode
+         [--help]                                              This help screen""" % sys.argv[0]
     sys.exit(1)
 
-startTime = time.time()
-def relTime(when): 
-    return when-startTime
+def relTime(when):
+   """ Time since program started """
+   return when-startTime
 
+###################### Initialization ##############################
 
-clientPort = 50000
-serverAddr = ("localhost", 50001)
-toClientAddr = ("", 50000)
-qCap = 4
+# default values
+startTime = time.time()                 # time the proxy was started at
+toClientAddr = ("", 50000)              # client address
+serverAddr = ("localhost", 50001)       # server port number
 byteRate = 1.0e5                        # 100k bytes/sec (roughly 1Mbit/sec)
 propLat = 1.0e-2                        # 10 ms
 pDelay = 0.0
-pDrop = 0.0
-verbose = 0
-delayMin = 1.0
-delayMax = 1.0
-
-print "argv=", sys.argv
+delayMin = 1.0                          # min delay 
+delayMax = 1.0                          # max delay 
+qCap = 4                                # queue capacity
+pDrop = 0.0                             # drop probability
+pDup = 0.0                              # duplicate probability
+verbose = 0                             # verbose mode
 
 try:
     args = sys.argv[1:]
     while args:
         sw = args[0]; del args[0]
-        if sw == "--toClientPort":
+        if sw == "--clientPort":
             toClientAddr = ("", int(args[0])); del args[0]
         elif sw == "--serverAddr":
             addr, port = re.split(":", args[0]); del args[0]
@@ -39,96 +59,134 @@ try:
             byteRate = float(args[0]); del args[0]
         elif sw == "--propLat":
             propLat = float(args[0]); del args[0]
-        elif sw == "--qCap":
-            qCap = int(args[0]); del args[0]
         elif sw == "--pDelay":
+            print "pdelay!", args[0]
             pDelay = float(args[0]); del args[0]
         elif sw == "--delayMin":
-            delayMin= float(args[0]); del args[0]
+            delayMin = float(args[0]); del args[0]
+            if delayMin > delayMax:
+                delayMax = delayMin
         elif sw == "--delayMax":
-            delayMax= float(args[0]); del args[0]
-        elif sw == "pDrop":
+            delayMax = float(args[0]); del args[0]
+        elif sw == "--qCap":
+            qCap = int(args[0]); del args[0]
+        elif sw == "--pDrop":
             pDrop = float(args[0]); del args[0]
+        elif sw == "--pDup":
+            pDup = float(args[0]); del args[0]
         elif sw == "-v" or sw == "--verbose":
             verbose = 1
+        elif sw == "-h" or sw == "--help":
+            usage();
         else:
             print "unexpected parameter %s" % sw
             usage();
-except:
+except Exception as e:
+    print "Error parsing arguments %s" % (e)
     usage()
 
+#print parameters
+print "argv=", sys.argv
+print """Parameters: \nclientAddr=%s, serverAddr=%s, byteRate=%g, propLat=%g,
+        pDelay=%f, delayMin=%d, delayMax=%d, qCap=%d, pDrop=%g, pDup=%g, verbose=%d""" % \
+      (repr(toClientAddr), repr(serverAddr), byteRate, propLat, pDelay, delayMin, delayMax, qCap, pDrop, pDup, verbose)
 
-print "Parameters: toClientAddr=%s, serverAddr=%s, byteRate=%g, propLat=%g, \nqCap=%d, pDelay=%g, pDrop=%g, verbose=%d" % \
-      (repr(toClientAddr), repr(serverAddr), byteRate, propLat, qCap, pDelay, pDrop, verbose)
-toServerSocket = socket(AF_INET, SOCK_DGRAM)
-toClientSocket = socket(AF_INET, SOCK_DGRAM)
-toClientSocket.bind(toClientAddr)
+# setup up connections
+toServerSocket = socket(AF_INET, SOCK_DGRAM)  # outgoing socket
+
+toClientSocket = socket(AF_INET, SOCK_DGRAM)  # incoming socket
+toClientSocket.bind(toClientAddr)             # bind so we can listen on incoming port
+
+# pair and name sockets
 otherSocket = {toClientSocket:toServerSocket, toServerSocket:toClientSocket}
 sockName = {toClientSocket:"toClientSocket", toServerSocket:"toServerSocket"}
 
-class TransmissionSim:
-    def __init__(self, outSock, destAddr, byteRate, propLat, qCap, pDelay=0.0, pDrop=0.0):
-        self.outSock, self.destAddr, self.byteRate, self.propLat, self.qCap, self.pDelay, self.pDrop = \
-         outSock, destAddr, 1.0*byteRate, propLat, qCap, pDelay, pDrop
-        self.busyUntil = time.time()
-        self.transmitTimes = []
+# ready data structures
+timeActions = Queue.PriorityQueue()           # minheap of (when, action).   <Action>() should be called at time <when>.
 
-    def scheduleDelivery(self, msg):
+###################### Initialization complete ##############################
+
+class TransmissionSim:
+    def __init__(self, outSock, destAddr, byteRate, propLat, pDelay, delayMin, delayMax, qCap, pDrop, pDup):
+        self.outSock, self.destAddr, self.byteRate, self.propLat =  \
+         outSock, destAddr, 1.0*byteRate, propLat
+        self.pDelay, self.delayMin, self.delayMax, self.qCap, self.pDrop, self.pDup = \
+         pDelay, delayMin, delayMax, qCap, pDrop, pDup
+        self.busyUntil = time.time()
+        self.xmitCompTimes = []
+
+    def scheduleDelivery(self, msg, eventQueue, duplicateMessage):
+        """ returns a list of delivery times for a message"""
+        deliveryTimes = {}
         now = time.time()
         if verbose:
             global sockName
-            print "msg for %s rec'd at relTime %f" % (sockName[self.outSock], relTime(now))
+            print "msg for %s rec'd at %f seconds" % (sockName[self.outSock], relTime(now))
 
         length = len(msg)
-        q = self.transmitTimes  # flush messages transmitted in the past
-        while len(q) and q[0] > now:
+        q = self.xmitCompTimes  # flush messages transmitted in the past
+        while len(q) and q[0] < now:
             del q[0]
         if len(q) >= self.qCap: # drop if q full
             if verbose: print "... queue full (oldest relTime = %f).  :(" % relTime(q[0])
-            return 
+            return
 
+        # we really don't throttle (bytes/second) so a message is sent as a burst
+        # we simulate throttling by sending the entire message at the time
+        # it would be done if we were throttling
+
+        # compute start and completion time if we were throttling
         startTransmissionTime = max(now, self.busyUntil)
         endTransmissionTime = startTransmissionTime + length/self.byteRate
 
         if verbose:
             print "... will be transmitted at reltime %f" % relTime(endTransmissionTime)
-
+   
         q.append(endTransmissionTime) # in transmit q until transmitted
-        self.busyUntil = endTransmissionTime # earliest time for next msg
+        self.busyUntil = min(self.busyUntil, endTransmissionTime) # earliest time for next msg
 
         deliveryTime = endTransmissionTime + self.propLat
 
-        if pDrop > 0.0 and self.pDrop < random.random(): # random drops
+        # check for drops
+        if self.pDrop > random.random(): # random drops
             if verbose: print "... random drop ;)"
             return
-        if pDelay > 0.0 and self.pDelay < random.random(): # random extra delay
-            delay = random.randrange(int(delayMin * 1000), int(delayMax * 1000))/1000.0 # in millisec
-            deliveryTime += delay
-            if verbose: print "... delaying %d ms" % int(delay * 1000)
+
+        # add delay
+        delay = 0
+        if self.pDelay > random.random():
+            delay = self.delayMin + random.random() * (self.delayMax - self.delayMin)
+            if verbose: print ".. delaying %fs" % (delay)
+        deliveryTime += delay
+
         if verbose: print "... scheduled for delivery at relTime %f" % relTime(deliveryTime)
-        timeActions.put((deliveryTime, lambda : TransmissionSim.deliver(self, msg)))
-        
-    def setDest(self, destAddr):        # allows dest addr to be updated
+
+        # check if we duplicate message
+        if duplicateMessage is False and self.pDup > random.random():
+            if verbose: print "Duplicating message ..."
+            self.scheduleDelivery(msg, eventQueue, True) 
+
+        if verbose: print "Message enqueued ... \n\n"    
+        eventQueue.put((deliveryTime, lambda : TransmissionSim.deliver(self, msg)))
+
+    def setDest(self, destAddr):
+        """ update destination address """
         self.destAddr = destAddr
 
     def deliver(self, msg):
+        """ deliver a message to the existing destination """
         if verbose: print "sending <%s> to %s at relTime=%f" % (msg, repr(self.destAddr), relTime(time.time()))
         self.outSock.sendto(msg, self.destAddr)
 
 transmissionSims = {}                   # inSock -> simulatorForOutSock
 for inSock, outAddr in ((toClientSocket, serverAddr), (toServerSocket, ("", None))): # client's addr will be set when msg rec'd
-    transmissionSims[inSock] = TransmissionSim(otherSocket[inSock], outAddr, byteRate, propLat, qCap) # send to other sock!
+    # send to other sock!
+    transmissionSims[inSock] = TransmissionSim(otherSocket[inSock],
+                                               outAddr, byteRate, propLat, pDelay, delayMin, delayMax, qCap, pDrop, pDup) 
 
 rSet = set([toClientSocket, toServerSocket])
 wSet = set()
 xSet = set([toClientSocket, toServerSocket])
-
-
-
-import Queue
-timeActions = Queue.PriorityQueue()     # minheap of (when, action).   <Action>() should be called at time <when>.
-
-from select import select
 
 while True:                             # forever
     now = time.time()
@@ -145,7 +203,8 @@ while True:                             # forever
         msg,addr = sock.recvfrom(2048)
         if sock == toClientSocket:      # if from client, update dest of toServer's transmission simulator 
             transmissionSims[toServerSocket].setDest(addr)
-        transmissionSims[sock].scheduleDelivery(msg)
+        transmissionSims[sock].scheduleDelivery(msg, timeActions, False)
+         
     for sock in xReady:
         print "weird.  UDP socket reported an error.  Bye."
         sys.exit(1)
