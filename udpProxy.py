@@ -1,4 +1,7 @@
 #! /bin/python
+
+# UDP Proxy by Eric Freudenthal with assistance from David Pruitt, Adrian Veliz, and Catherine Tabor
+
 import sys, re
 import time, random
 import Queue
