@@ -1,17 +1,17 @@
-#! /bin/python
+#! /usr/bin/env python3
 
 # UDP Proxy by Eric Freudenthal with assistance from David Pruitt, Adrian Veliz, and Catherine Tabor
 
 import sys, re
 import time, random
-import Queue
+import queue
 from select import select
 from socket import *
 from sys import exit
 
 def usage():
     """ print usage information """
-    print """usage: %s \n
+    print("""usage: %s \n
           Option                                   Default     Description
          [--clientPort <port#>]                      50000     Client port number
          [--serverAddr host:port]          localhost:50001     Server port number
@@ -26,7 +26,7 @@ def usage():
          [--pDup <prob-dup-msg]                        0.0     Probability of a msg duplication 
 
          [--verbose]                                    off    Verbose Mode
-         [--help]                                              This help screen""" % sys.argv[0]
+         [--help]                                              This help screen""" % sys.argv[0])
     sys.exit(1)
 
 def relTime(when):
@@ -63,7 +63,7 @@ try:
         elif sw == "--propLat":
             propLat = float(args[0]); del args[0]
         elif sw == "--pDelay":
-            print "pdelay!", args[0]
+            print("pdelay!", args[0])
             pDelay = float(args[0]); del args[0]
         elif sw == "--delayMin":
             delayMin = float(args[0]); del args[0]
@@ -82,17 +82,17 @@ try:
         elif sw == "-h" or sw == "--help":
             usage();
         else:
-            print "unexpected parameter %s" % sw
+            print("unexpected parameter %s" % sw)
             usage();
 except Exception as e:
-    print "Error parsing arguments %s" % (e)
+    print("Error parsing arguments %s" % (e))
     usage()
 
 #print parameters
-print "argv=", sys.argv
-print """Parameters: \nclientAddr=%s, serverAddr=%s, byteRate=%g, propLat=%g,
+print("argv=", sys.argv)
+print("""Parameters: \nclientAddr=%s, serverAddr=%s, byteRate=%g, propLat=%g,
         pDelay=%f, delayMin=%d, delayMax=%d, qCap=%d, pDrop=%g, pDup=%g, verbose=%d""" % \
-      (repr(toClientAddr), repr(serverAddr), byteRate, propLat, pDelay, delayMin, delayMax, qCap, pDrop, pDup, verbose)
+      (repr(toClientAddr), repr(serverAddr), byteRate, propLat, pDelay, delayMin, delayMax, qCap, pDrop, pDup, verbose))
 
 # setup up connections
 toServerSocket = socket(AF_INET, SOCK_DGRAM)  # outgoing socket
@@ -105,7 +105,7 @@ otherSocket = {toClientSocket:toServerSocket, toServerSocket:toClientSocket}
 sockName = {toClientSocket:"toClientSocket", toServerSocket:"toServerSocket"}
 
 # ready data structures
-timeActions = Queue.PriorityQueue()           # minheap of (when, action).   <Action>() should be called at time <when>.
+timeActions = queue.PriorityQueue()           # minheap of (when, action).   <Action>() should be called at time <when>.
 
 ###################### Initialization complete ##############################
 
@@ -115,8 +115,8 @@ class TransmissionSim:
          outSock, destAddr, 1.0*byteRate, propLat
         self.pDelay, self.delayMin, self.delayMax, self.qCap, self.pDrop, self.pDup = \
          pDelay, delayMin, delayMax, qCap, pDrop, pDup
-        self.busyUntil = time.time()
-        self.xmitCompTimes = []
+        self.busyUntil = time.time() # earliest time a new message can be sent
+        self.xmitCompletionTimes = []
 
     def scheduleDelivery(self, msg, eventQueue, duplicateMessage):
         """ returns a list of delivery times for a message"""
@@ -124,14 +124,14 @@ class TransmissionSim:
         now = time.time()
         if verbose:
             global sockName
-            print "msg for %s rec'd at %f seconds" % (sockName[self.outSock], relTime(now))
+            print("msg for %s rec'd at %f seconds" % (sockName[self.outSock], relTime(now)))
 
         length = len(msg)
-        q = self.xmitCompTimes  # flush messages transmitted in the past
-        while len(q) and q[0] < now:
-            del q[0]
-        if len(q) >= self.qCap: # drop if q full
-            if verbose: print "... queue full (oldest relTime = %f).  :(" % relTime(q[0])
+        xmitCompletionTimes = self.xmitCompletionTimes  # flush messages transmitted in the past
+        while len(xmitCompletionTimes) and xmitCompletionTimes[0] < now:
+            del xmitCompletionTimes[0]
+        if len(xmitCompletionTimes) >= self.qCap: # drop if q full
+            if verbose: print("... queue full (oldest relTime = %f).  :(" % relTime(xmitCompletionTimes[0]))
             return
 
         # we really don't throttle (bytes/second) so a message is sent as a burst
@@ -143,33 +143,33 @@ class TransmissionSim:
         endTransmissionTime = startTransmissionTime + length/self.byteRate
 
         if verbose:
-            print "... will be transmitted at reltime %f" % relTime(endTransmissionTime)
+            print("... will be transmitted at reltime %f" % relTime(endTransmissionTime))
    
-        q.append(endTransmissionTime) # in transmit q until transmitted
+        xmitCompletionTimes.append(endTransmissionTime) # in transmit q until transmitted
         self.busyUntil = min(self.busyUntil, endTransmissionTime) # earliest time for next msg
 
         deliveryTime = endTransmissionTime + self.propLat
 
         # check for drops
         if self.pDrop > random.random(): # random drops
-            if verbose: print "... random drop ;)"
+            if verbose: print("... random drop ;)")
             return
 
         # add delay
         delay = 0
         if self.pDelay > random.random():
             delay = self.delayMin + random.random() * (self.delayMax - self.delayMin)
-            if verbose: print ".. delaying %fs" % (delay)
+            if verbose: print(".. delaying %fs" % (delay))
         deliveryTime += delay
 
-        if verbose: print "... scheduled for delivery at relTime %f" % relTime(deliveryTime)
+        if verbose: print("... scheduled for delivery at relTime %f" % relTime(deliveryTime))
 
         # check if we duplicate message
         if duplicateMessage is False and self.pDup > random.random():
-            if verbose: print "Duplicating message ..."
+            if verbose: print("Duplicating message ...")
             self.scheduleDelivery(msg, eventQueue, True) 
 
-        if verbose: print "Message enqueued ... \n\n"    
+        if verbose: print("Message enqueued ... \n\n")    
         eventQueue.put((deliveryTime, lambda : TransmissionSim.deliver(self, msg)))
 
     def setDest(self, destAddr):
@@ -178,7 +178,7 @@ class TransmissionSim:
 
     def deliver(self, msg):
         """ deliver a message to the existing destination """
-        if verbose: print "sending <%s> to %s at relTime=%f" % (msg, repr(self.destAddr), relTime(time.time()))
+        if verbose: print("sending <%s> to %s at relTime=%f" % (msg, repr(self.destAddr), relTime(time.time())))
         self.outSock.sendto(msg, self.destAddr)
 
 transmissionSims = {}                   # inSock -> simulatorForOutSock
@@ -209,6 +209,6 @@ while True:                             # forever
         transmissionSims[sock].scheduleDelivery(msg, timeActions, False)
          
     for sock in xReady:
-        print "weird.  UDP socket reported an error.  Bye."
+        print("weird.  UDP socket reported an error.  Bye.")
         sys.exit(1)
 
