@@ -56,20 +56,34 @@ array sent. So only 2 bytes are needed for the beginning and the end for the
 next packet. First 2 bytes are for id, last two bytes are for next. Going from
 00 to 15
 
-How do we know if we're done? Should I send what the total number of packets is supposed to be?
-Maybe it isn't as necessary and instead use the last 2 bytes to have a special meaning. The
-server won't have a special rule for knowing how large a file is to be transmitted. It
-will be up to the client to know the 15MB size. 
+How do we know if we're done? Should I send what the total number of packets is 
+supposed to be? Maybe it isn't as necessary and instead use the last 2 bytes to 
+have a special meaning. The server won't have a special rule for knowing how 
+large a file is to be transmitted. It will be up to the client to know the 15MB 
+size. 
 """
 
 current_state = LISTENING
 
+readSockets = []
+writeSockets = []
+errorSockets = []
+
+readSockets.append(serverSocket)
+dgram = b''
+client = None
+
 while 1:
-    message, clientAddrPort = serverSocket.recvfrom(999)
+    readReady, writeReady, errorReady = select.select(readSockets, writeSockets,
+                                                      errorSockets, 5) 
     print("from %s: rec'd '%s'" % (repr(clientAddrPort), message))
+    for sock in readReady:
+        dgram, client = sock.recvfrom(999)
+    for sock in writeReady:
+        serverSocket.sendto(
     if current_state is LISTENING:
-        if message == b'client introduce':
-            serverSocket.sendto(clientAddrPort, b'introduce:ACK')
+        if message == b'introduce':
+            serverSocket.sendto(clientAddrPort, b'ACK')
             current_state = READY
         else:
             continue
