@@ -47,6 +47,14 @@ SAVE_COUNTER = 0
 CLOSE_FILE_LIMIT = 10
 CLOSE_FILE_COUNTER = 0
 
+def reset_counters():
+    LISTENING_COUNTER = 0
+    READY_COUNTER = 0
+    OPEN_FILE_COUNTER = 0
+    WRITING_COUNTER = 0
+    DONE_COUNTER = 0
+    SAVE_COUNTER = 0
+    CLOSE_FILE_COUNTER = 0
 """
 I must implement sequence numbers to enumerate the packets being sent.
 I'm going to set a limit on the size of files able to be transmitted. I'm going
