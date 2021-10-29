@@ -32,8 +32,6 @@ print("ready to receive")
 LISTENING, READY, OPEN_FILE, WRITING, DONE, SAVE, CLOSE_FILE = 1,2,3,4,5,6,7
 """Counters for each state. These are the amount of times the server will
 try to send the messsage back to the client before dropping it."""
-LISTENING_LIMIT = 10
-LISTENING_COUNTER = 0
 READY_LIMIT = 10
 READY_COUNTER = 0
 OPEN_FILE_LIMIT = 10
@@ -82,35 +80,72 @@ dgram = b''
 client = None
 
 while 1:
+    # Select is mostly for utilizing the timeout as I understand. 
     readReady, writeReady, errorReady = select.select(readSockets, writeSockets,
-                                                      errorSockets, 5) 
-    print("from %s: rec'd '%s'" % (repr(clientAddrPort), message))
-    for sock in readReady:
-        dgram, client = sock.recvfrom(999)
-    for sock in writeReady:
-        serverSocket.sendto(
-    if current_state is LISTENING:
-        if message == b'introduce':
-            serverSocket.sendto(clientAddrPort, b'ACK')
-            current_state = READY
-        else:
-            continue
-    elif current_state is READY:
-        if message == b'asd':
+                                                      errorSockets, 5)
+    # If the select timeout occurs, we need to increment the counter.
+    if not readReady and not writeready and not errorReady:
+        count_state()
+        check_timeout()
+    # If there is work to do, do it in here. 
+    else:
+        for sock in readReady:
+            dgram, client = sock.recvfrom(999)
+            print('dgram received from\t%s\t%s' % (client, dgram))
+        if current_state is LISTENING:
+            if dgram == b'introduce':
+                print('\t>LISTENING: recieved introduce. Switching to READY. \
+                Sending ACK...')
+                current_state = READY
+                serverSocket.sendto(client, b'ACK')
+        elif current_state is READY:
+            print('\t>READY: recieved dgram. Confirming...')
+            serverSocket.sendto(client, dgram)
+            current_state = OPEN_FILE
+        elif current_state is OPEN_FILE:
+            print('\tOPEN_FILE'
+        elif current_state is WRITING:
             
-    elif current_state is OPEN_FILE:
-        
-    elif current_state is WRITING:
-        
-    elif current_state is DONE:
-        
-    elif current_state is SAVE:
-        
-    elif current_state is CLOSE_FILE:
+        elif current_state is DONE:
+            
+        elif current_state is SAVE:
+            
+        elif current_state is CLOSE_FILE:
     
 
     
     modifiedMessage = message.decode().upper()
     serverSocket.sendto(modifiedMessage.encode(), clientAddrPort)
+
+def check_timeout():
+    # Done in order of hypothesis of most likely to timeout.
+    if (READY_COUNTER is READY_LIMIT or
+        OPEN_FILE_COUNTER is OPEN_FILE_LIMIT or
+        WRITING_COUNTER is WRITING_LIMIT or
+        DONE_COUNTER is DONE_LIMIT or
+        SAVE_COUNTER is SAVE_LIMIT or
+        CLOSE_FILE_COUNTER is CLOSE_FILE_LIMIT):
+        
+        timeout_protocol()
+        
+
+def timeout_protocol():
+    current_state = LISTENING
+    dgram = b''
+    client = None
+    reset_counters()
     
                 
+def count_state():
+    if current_state is READY:
+        READY_COUNTER += 1
+    elif current_state is OPEN_FILE:
+        OPEN_FILE_COUNTER += 1
+    elif current_state is WRITING:
+        WRITING_COUNTER += 1
+    elif current_state is DONE:
+        DONE_COUNTER += 1
+    elif current_state is SAVE:
+        SAVE_COUNTER += 1
+    elif current_state is CLOSE_FILE:
+        CLOSE_FILE_COUNTER += 1
