@@ -1,0 +1,78 @@
+#! /usr/bin/env python3
+from socket import *
+
+# default params
+serverAddr = ("", 50001)
+
+import sys
+def usage():
+    print("usage: %s [--serverPort <port>]"  % sys.argv[0])
+    sys.exit(1)
+
+try:
+    args = sys.argv[1:]
+    while args:
+        sw = args[0]; del args[0]
+        if sw == "--serverPort":
+            serverAddr = ("", int(args[0])); del args[0]
+        else:
+            print("unexpected parameter %s" % args[0])
+            usage();
+except:
+    usage()
+
+print("binding datagram socket to %s" % repr(serverAddr))
+
+serverSocket = socket(AF_INET, SOCK_DGRAM)
+serverSocket.bind(serverAddr)
+print("ready to receive")
+
+#enum for states of the server
+LISTENING, READY, OPEN_FILE, WRITING, DONE, SAVE, CLOSE_FILE = 1,2,3,4,5,6,7
+"""Counters for each state. These are the amount of times the server will
+try to send the messsage back to the client before dropping it."""
+LISTENING_LIMIT = 10
+LISTENING_COUNTER = 0
+READY_LIMIT = 10
+READY_COUNTER = 0
+OPEN_FILE_LIMIT = 10
+OPEN_FILE_COUNTER = 0
+WRITING_LIMIT = 10
+WRITING_COUNTER = 0
+DONE_LIMIT = 10
+DONE_COUNTER = 0
+SAVE_LIMIT = 10
+SAVE_COUNTER = 0
+CLOSE_FILE_LIMIT = 10
+CLOSE_FILE_COUNTER = 0
+
+current_state = LISTENING
+
+while 1:
+    message, clientAddrPort = serverSocket.recvfrom(999)
+    print("from %s: rec'd '%s'" % (repr(clientAddrPort), message))
+    if current_state is LISTENING:
+        if message == b'client introduce':
+            serverSocket.sendto(clientAddrPort, b'introduce:ACK')
+            current_state = READY
+        else:
+            continue
+    elif current_state is READY:
+        if message == b''
+        
+    elif current_state is OPEN_FILE:
+        
+    elif current_state is WRITING:
+        
+    elif current_state is DONE:
+        
+    elif current_state is SAVE:
+        
+    elif current_state is CLOSE_FILE:
+    
+
+    
+    modifiedMessage = message.decode().upper()
+    serverSocket.sendto(modifiedMessage.encode(), clientAddrPort)
+    
+                
